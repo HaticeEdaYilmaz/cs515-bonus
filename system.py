@@ -59,7 +59,7 @@ class CommSystem(nn.Module):
                     fb_hist = F.pad(fb_hist, (0, pad))
 
             # ── TX Encoder  →  x(t) ∈ (B, 4), ||x||²=1 ──────────────────────
-            x_t = self.encoder(messages, tx_hist, fb_hist)
+            x_t = self.encoder(messages, tx_hist, fb_hist, round_idx=t)
 
             # ── AWGN channel  →  y(t) = x(t) + ε ────────────────────────────
             noise = torch.randn_like(x_t) * self.sigma
