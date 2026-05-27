@@ -1,4 +1,4 @@
-import os
+import argparse
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
@@ -12,17 +12,15 @@ from system import CommSystem
 # ─────────────────────────────────────────────────────────────────────────────
 def run_epoch(model, loader, optimizer, device, config, train: bool):
     model.train(train)
-    total_loss   = 0.0
+    total_loss    = 0.0
     total_correct = 0
     total_symbols = 0
 
     with torch.set_grad_enabled(train):
         for messages in loader:
             messages = messages.to(device)          # (B, 4)
+            logits   = model(messages)              # (B, 4, 8)
 
-            logits = model(messages)                # (B, 4, 8)
-
-            # Cross-entropy over all 4 × B symbol predictions
             loss = F.cross_entropy(
                 logits.view(-1, config.vocab_size),
                 messages.view(-1),
@@ -34,37 +32,29 @@ def run_epoch(model, loader, optimizer, device, config, train: bool):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
                 optimizer.step()
 
-            preds = logits.argmax(dim=-1)           # (B, 4)
+            preds          = logits.argmax(dim=-1)
             total_correct  += (preds == messages).sum().item()
             total_symbols  += messages.numel()
             total_loss     += loss.item()
 
-    avg_loss = total_loss / len(loader)
-    ser      = 1.0 - total_correct / total_symbols   # Symbol Error Rate
-    return avg_loss, ser
+    return total_loss / len(loader), 1.0 - total_correct / total_symbols
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def train(config: Config | None = None):
-    if config is None:
-        config = Config()
-
+def train(config: Config):
     torch.manual_seed(config.seed)
     device = config.get_device()
-    print(f"Using device: {device}")
+    print(f"Device     : {device}")
 
-    # ── Data ─────────────────────────────────────────────────────────────────
     train_dl, val_dl = get_dataloaders(config)
 
-    # ── Model ────────────────────────────────────────────────────────────────
     model = CommSystem(config).to(device)
-    print(f"Parameters: {model.count_parameters():,}")
+    print(f"Parameters : {model.count_parameters():,}")
+    print(f"T={config.T}  sigma2={config.sigma2}  d_model={config.d_model}\n")
 
-    # ── Optimiser + Scheduler ────────────────────────────────────────────────
     optimizer = AdamW(model.parameters(), lr=config.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-5)
 
-    # ── Training loop ────────────────────────────────────────────────────────
     best_val_ser = float("inf")
     history = {"train_loss": [], "val_loss": [], "train_ser": [], "val_ser": []}
 
@@ -79,27 +69,48 @@ def train(config: Config | None = None):
         history["val_ser"].append(va_ser)
 
         if epoch % 10 == 0 or epoch == 1:
-            lr_now = scheduler.get_last_lr()[0]
             print(
                 f"Epoch {epoch:4d}/{config.epochs} | "
                 f"Train loss {tr_loss:.4f}  SER {tr_ser:.4f} | "
                 f"Val loss {va_loss:.4f}  SER {va_ser:.4f} | "
-                f"LR {lr_now:.2e}"
+                f"LR {scheduler.get_last_lr()[0]:.2e}"
             )
 
-        # Save best checkpoint
         if va_ser < best_val_ser:
             best_val_ser = va_ser
             torch.save(
                 {"epoch": epoch, "model_state": model.state_dict(),
-                 "val_ser": va_ser, "config": config},
+                 "val_ser": va_ser, "config": config, "history": history},
                 config.save_path,
             )
 
-    print(f"\nBest val SER: {best_val_ser:.4f}  (checkpoint → {config.save_path})")
+    print(f"\nBest val SER : {best_val_ser:.4f}  →  {config.save_path}")
     return model, history
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def parse_args():
+    p = argparse.ArgumentParser(description="Train interactive AWGN comm system")
+    p.add_argument("--epochs",      type=int,   default=None)
+    p.add_argument("--batch_size",  type=int,   default=None)
+    p.add_argument("--lr",          type=float, default=None)
+    p.add_argument("--d_model",     type=int,   default=None)
+    p.add_argument("--n_layers",    type=int,   default=None)
+    p.add_argument("--T",           type=int,   default=None)
+    p.add_argument("--sigma2",      type=float, default=None)
+    p.add_argument("--save_path",   type=str,   default=None)
+    p.add_argument("--seed",        type=int,   default=None)
+    return p.parse_args()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    train()
+    args   = parse_args()
+    config = Config()
+
+    # Override config with any CLI args that were passed
+    for key, val in vars(args).items():
+        if val is not None:
+            setattr(config, key, val)
+
+    train(config)
