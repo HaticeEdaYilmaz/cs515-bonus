@@ -18,6 +18,8 @@ def parse_args():
     p.add_argument("--lr",         type=float, default=None)
     p.add_argument("--d_model",    type=int,   default=None)
     p.add_argument("--n_layers",   type=int,   default=None)
+    p.add_argument("--d_ff",       type=int,   default=None)
+    p.add_argument("--d_emb",      type=int,   default=None)
     p.add_argument("--T",          type=int,   default=None)
     p.add_argument("--sigma2",     type=float, default=None)
     p.add_argument("--save_path",  type=str,   default=None)
@@ -35,7 +37,7 @@ def main():
     config = Config()
 
     for key in ["epochs", "batch_size", "lr", "d_model", "n_layers",
-                "T", "sigma2", "save_path", "seed"]:
+                "d_ff", "d_emb", "T", "sigma2", "save_path", "seed"]:
         val = getattr(args, key)
         if val is not None:
             setattr(config, key, val)
